@@ -18,8 +18,9 @@
 --   * Timestamps are TEXT ISO-8601 UTC, e.g. '2026-09-10T14:03:00Z'.
 --   * Enumerations are CHECK constraints. SQLite cannot alter a constraint in
 --     place, so changing one means rebuilding the table; trivial at this size.
---   * Nothing derived is stored. Current stage, idle days and liveness come
---     from the application_status view at the bottom of this file.
+--   * Nothing derived is stored. Current and furthest stage, idle days and
+--     liveness come from the application_status view at the bottom of this
+--     file.
 --   * No secondary indexes: at ~60 applications every query scans a few KB.
 --
 -- Design source: PROJECT_BRIEF.md sections 2-4. Bump user_version whenever
@@ -28,13 +29,13 @@
 
 BEGIN;
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 -- -----------------------------------------------------------------------------
 -- Stage vocabulary. A table rather than a CHECK because queries need the
--- ordering: current stage = highest-ordinal event. Terminal stages share an
--- ordinal above every live stage, so once one is logged it is the current
--- stage.
+-- ordering: it defines the furthest stage reached and breaks same-day ties.
+-- Terminal stages share an ordinal above every live stage, so a terminal event
+-- logged on the same day as a live one wins the tie.
 -- -----------------------------------------------------------------------------
 CREATE TABLE stage (
     name        TEXT    PRIMARY KEY,
@@ -211,35 +212,47 @@ CREATE TABLE posting_snapshot (
 
 -- -----------------------------------------------------------------------------
 -- Derived status, computed on read.
---   current_stage  highest-ordinal event; ties go to the latest date, then the
---                  latest insert. NULL if the application has no events. Per
---                  the brief, a later lower-ordinal event (a logged
---                  regression) does not change it.
---   last_event_on  date of the most recent event, whatever its stage
---   days_idle      whole days from last_event_on to today, in the local time
---                  of the machine running SQLite. NULL if there are no events.
---   is_live        1 while there is no outcome and the stage is not terminal
+--   current_stage   where the application is now: its latest event by date.
+--                   Same-day ties go to the later stage, then the later
+--                   insert, so backfilled history never moves it backward.
+--                   NULL if the application has no events.
+--   furthest_stage  the highest live stage it ever reached; what the funnel
+--                   counts. Terminal stages never count as progress, so an
+--                   application rejected after a screen reached `screen`.
+--                   (The brief's "highest-ordinal event" is this column.)
+--   last_event_on   date of the current event, i.e. the most recent one
+--   days_idle       whole days from last_event_on to today, in the local time
+--                   of the machine running SQLite. NULL if there are no events.
+--   is_live         1 while there is no outcome and the current stage is not
+--                   terminal. Reopening a closed application means clearing
+--                   its outcome as well as logging the new event.
 -- -----------------------------------------------------------------------------
 CREATE VIEW application_status AS
-WITH ranked AS (
+WITH latest AS (
     SELECT e.application_id,
            e.stage,
-           max(e.occurred_on) OVER (PARTITION BY e.application_id) AS last_event_on,
+           e.occurred_on,
+           s.is_terminal,
            row_number() OVER (
                PARTITION BY e.application_id
-               ORDER BY s.ordinal DESC, e.occurred_on DESC, e.id DESC
+               ORDER BY e.occurred_on DESC, s.ordinal DESC, e.id DESC
            ) AS rn
     FROM stage_event AS e
     JOIN stage AS s ON s.name = e.stage
 )
-SELECT a.id                                                       AS application_id,
-       r.stage                                                    AS current_stage,
-       r.last_event_on,
+SELECT a.id                                                   AS application_id,
+       l.stage                                                AS current_stage,
+       (SELECT s.name
+          FROM stage_event AS e
+          JOIN stage AS s ON s.name = e.stage
+         WHERE e.application_id = a.id AND s.is_terminal = 0
+         ORDER BY s.ordinal DESC
+         LIMIT 1)                                             AS furthest_stage,
+       l.occurred_on                                          AS last_event_on,
        CAST(julianday(date('now', 'localtime'))
-            - julianday(r.last_event_on) AS INTEGER)              AS days_idle,
-       (a.outcome IS NULL AND coalesce(s.is_terminal, 0) = 0)     AS is_live
+            - julianday(l.occurred_on) AS INTEGER)            AS days_idle,
+       (a.outcome IS NULL AND coalesce(l.is_terminal, 0) = 0) AS is_live
 FROM application AS a
-LEFT JOIN ranked AS r ON r.application_id = a.id AND r.rn = 1
-LEFT JOIN stage  AS s ON s.name = r.stage;
+LEFT JOIN latest AS l ON l.application_id = a.id AND l.rn = 1;
 
 COMMIT;

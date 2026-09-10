@@ -57,8 +57,10 @@ def log(
 
 
 def status(db: sqlite3.Connection, app: int) -> tuple[object, ...]:
+    """(current_stage, furthest_stage, days_idle, is_live) from the derived-status view."""
     row = db.execute(
-        "SELECT current_stage, days_idle, is_live FROM application_status WHERE application_id = ?",
+        "SELECT current_stage, furthest_stage, days_idle, is_live"
+        " FROM application_status WHERE application_id = ?",
         (app,),
     ).fetchone()
     return tuple(row)
@@ -174,7 +176,7 @@ def test_rejects_invalid_rows(db: sqlite3.Connection, error: str, sql: str) -> N
         db.execute(sql)
 
 
-def test_current_stage_is_highest_ordinal_and_idle_counts_from_latest_event(
+def test_current_stage_is_the_latest_event_and_idle_days_count_from_it(
     db: sqlite3.Connection,
 ) -> None:
     app = add_application(db)
@@ -183,21 +185,34 @@ def test_current_stage_is_highest_ordinal_and_idle_counts_from_latest_event(
     log(db, app, "screen", 20)  # assessment skipped: forward skips are fine
     log(db, app, "interviewing", 15)
     log(db, app, "interviewing", 10)  # repeat rounds are just more events
-    assert status(db, app) == ("interviewing", 10, 1)
+    assert status(db, app) == ("interviewing", "interviewing", 10, 1)
 
 
 def test_application_without_events_has_no_stage_and_is_live(db: sqlite3.Connection) -> None:
-    assert status(db, add_application(db)) == (None, None, 1)
+    assert status(db, add_application(db)) == (None, None, None, 1)
 
 
-def test_later_lower_stage_event_resets_idle_days_but_not_current_stage(
+def test_regression_becomes_current_while_furthest_keeps_the_high_mark(
     db: sqlite3.Connection,
 ) -> None:
-    # The brief's rule as written: current stage is the highest one reached.
     app = add_application(db)
-    log(db, app, "interviewing", 10)
-    log(db, app, "screen", 3, note="recruiter asked for another screen")
-    assert status(db, app) == ("interviewing", 3, 1)
+    log(db, app, "final_round", 10)
+    log(db, app, "interviewing", 3, note="team reorganized; one more round")
+    assert status(db, app) == ("interviewing", "final_round", 3, 1)
+
+
+def test_backfilled_history_does_not_move_the_current_stage(db: sqlite3.Connection) -> None:
+    app = add_application(db)
+    log(db, app, "interviewing", 5)
+    log(db, app, "applied", 20)  # typed in afterwards, dated earlier
+    assert status(db, app) == ("interviewing", "interviewing", 5, 1)
+
+
+def test_same_day_events_resolve_to_the_later_stage(db: sqlite3.Connection) -> None:
+    app = add_application(db)
+    log(db, app, "screen", 0)
+    log(db, app, "applied", 0)  # same day, typed in second
+    assert status(db, app) == ("screen", "screen", 0, 1)
 
 
 def test_terminal_stage_requires_an_outcome(db: sqlite3.Connection) -> None:
@@ -207,23 +222,28 @@ def test_terminal_stage_requires_an_outcome(db: sqlite3.Connection) -> None:
         log(db, app, "rejected", 0)
     db.execute("UPDATE application SET outcome = 'rejected_no_response' WHERE id = ?", (app,))
     log(db, app, "rejected", 0)
-    assert status(db, app) == ("rejected", 0, 0)
+    # A terminal stage closes the application but never counts as progress.
+    assert status(db, app) == ("rejected", "applied", 0, 0)
 
 
-def test_latest_terminal_event_wins_a_tie(db: sqlite3.Connection) -> None:
+def test_revived_application_shows_its_new_stage_but_stays_closed_until_reopened(
+    db: sqlite3.Connection,
+) -> None:
     app = add_application(db, outcome="ghosted")
     log(db, app, "applied", 40)
-    log(db, app, "ghosted", 5)
-    log(db, app, "rejected", 1)  # the rejection email arrived after all
-    assert status(db, app) == ("rejected", 1, 0)
+    log(db, app, "ghosted", 10)
+    log(db, app, "screen", 2, note="recruiter came back")
+    assert status(db, app) == ("screen", "screen", 2, 0)
+    db.execute("UPDATE application SET outcome = NULL WHERE id = ?", (app,))
+    assert status(db, app) == ("screen", "screen", 2, 1)
 
 
 def test_offer_stays_live_until_resolved(db: sqlite3.Connection) -> None:
     app = add_application(db)
     log(db, app, "offer", 2)
-    assert status(db, app) == ("offer", 2, 1)
+    assert status(db, app) == ("offer", "offer", 2, 1)
     db.execute("UPDATE application SET outcome = 'offer_accepted' WHERE id = ?", (app,))
-    assert status(db, app) == ("offer", 2, 0)
+    assert status(db, app) == ("offer", "offer", 2, 0)
 
 
 def test_stage_events_cannot_be_edited_but_can_be_deleted(db: sqlite3.Connection) -> None:
@@ -232,7 +252,7 @@ def test_stage_events_cannot_be_edited_but_can_be_deleted(db: sqlite3.Connection
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         db.execute("UPDATE stage_event SET occurred_on = '2026-01-01'")
     db.execute("DELETE FROM stage_event")
-    assert status(db, app) == (None, None, 1)
+    assert status(db, app) == (None, None, None, 1)
 
 
 def test_company_with_applications_cannot_be_deleted(db: sqlite3.Connection) -> None:

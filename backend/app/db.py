@@ -11,7 +11,7 @@ DEFAULT_DB = REPO_ROOT / "data" / "lamp.sqlite"
 
 # Must match `PRAGMA user_version` in db/schema.sql. The app refuses to start
 # against a database built from any other version of the template.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def database_path() -> Path:

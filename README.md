@@ -239,10 +239,19 @@ final_round → offer`. Any live stage can end in `rejected`, `ghosted`, or
 `withdrawn`. Stages can be skipped going forward, and `interviewing` repeats,
 so three rounds are three events.
 
-**Status is derived, never stored.** The current stage is the highest-ordinal
-event, and idle time counts from the latest event. A stored status column
-drifts out of sync with the dates within weeks, and that drift is the main
-reason to leave the spreadsheet.
+**Status is derived, never stored.** The `application_status` view computes
+two stages for each application:
+
+- **Current stage:** where it is now, meaning its latest event by date. A
+  logged regression or a revived application shows up here. Same-day events
+  resolve to the later stage, so backfilling history never moves it backward.
+- **Furthest stage:** the highest live stage it ever reached. This is what
+  the funnel counts, so an application rejected after a screen still counts
+  as having reached `screen`.
+
+Idle time counts from the latest event. A stored status column drifts out of
+sync with the dates within weeks, and that drift is the main reason to leave
+the spreadsheet.
 
 ### How LAMP maps onto the tables
 
