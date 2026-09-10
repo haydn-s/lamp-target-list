@@ -1,0 +1,42 @@
+# -----------------------------------------------------------------------------
+# Local data: personal, never commit.
+# The live database holds real people's contact details and notes. The
+# committed template is db/schema.sql (plain SQL), so no SQLite file anywhere
+# in this repo is meant to be tracked.
+# -----------------------------------------------------------------------------
+/data/
+*.sqlite
+*.sqlite3
+*.db
+# SQLite sidecars: rollback journal, write-ahead log, shared memory
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node / frontend
+node_modules/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store
