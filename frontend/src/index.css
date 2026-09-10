@@ -1,0 +1,39 @@
+:root {
+  --bg: #f6f6f4;
+  --surface: #ffffff;
+  --text: #1f1f23;
+  --muted: #6b6b73;
+  --border: #e2e2de;
+  --ok: #1a7f37;
+  --error: #c62828;
+
+  font: 14px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color-scheme: light dark;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151518;
+    --surface: #1d1d21;
+    --text: #ececef;
+    --muted: #9a9aa3;
+    --border: #2c2c32;
+    --ok: #4ac26b;
+    --error: #ff7b72;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  /* Desktop only: below this width the page scrolls sideways instead of reflowing. */
+  min-width: 1024px;
+}

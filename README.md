@@ -9,8 +9,9 @@ Sheets "Target Company List".
 > Search* (**L**ist, **A**lumni, **M**otivation, **P**osting). It has nothing
 > to do with the Linux/Apache/MySQL/PHP stack.
 
-**Status:** prototype, runs locally, Phase 0. The database template and its
-bootstrap script exist. The API and UI don't yet.
+**Status:** prototype, runs locally. The app skeleton works end to end: a
+React shell calls a FastAPI health check, which reads from SQLite. CI runs on
+every pull request. Features start with Phase 1.
 
 ## Why it exists
 
@@ -33,7 +34,7 @@ The full design (domain model, rules, alerting, phasing) is in
 | Layer | Choice | Reasoning |
 |---|---|---|
 | Frontend | React + TypeScript, Vite | Client-rendered SPA over a local JSON API. Nothing needs server rendering, so Vite rather than Next.js. **Desktop only**: laid out for ~1280px and wider, with no mobile breakpoints. |
-| Backend | Python, FastAPI, stdlib `sqlite3` | Pydantic models validate the many enum fields at the API boundary for free. SQL-first with no ORM, because the queries that matter (current stage, funnel, alerts) are aggregates that read better as SQL. |
+| Backend | Python, FastAPI, stdlib `sqlite3`, managed with uv | Pydantic models validate the many enum fields at the API boundary for free. SQL-first with no ORM, because the queries that matter (current stage, funnel, alerts) are aggregates that read better as SQL. |
 | Database | SQLite, one file | A few hundred rows, one user. There's no server to run, and a backup is one command. |
 | Hosting | Local machine only | The API binds to `127.0.0.1`, so there's no auth and no Docker for now. |
 
@@ -47,33 +48,121 @@ triggers, and the view would all need translating.
 
 Requirements:
 
-- **Python 3.12+** built against **SQLite 3.37 or newer**, which the schema's
-  `STRICT` tables need. Check with
+- **[uv](https://docs.astral.sh/uv/)**, which installs the backend's pinned
+  Python (3.14) by itself.
+- **Python 3 built against SQLite 3.37 or newer** for `scripts/init_db.py`;
+  the schema's `STRICT` tables need it. Check with
   `python3 -c "import sqlite3; print(sqlite3.sqlite_version)"`.
-- **Node.js 22+**, once the frontend exists.
+- **Node.js 24**, pinned in `frontend/.node-version`. With
+  [fnm](https://github.com/Schniz/fnm) it's selected automatically when you
+  `cd` into `frontend/`.
+- **[GitHub CLI](https://cli.github.com/)** (`gh`), only for
+  `scripts/deploy.sh`.
 
 ```bash
-git clone <repo-url> lamp-target-list
+git clone https://github.com/haydn-s/lamp-target-list.git
 cd lamp-target-list
 python3 scripts/init_db.py
+(cd backend && uv sync)
+(cd frontend && npm ci)
 ```
 
-This creates `data/lamp.sqlite` from the template. To put it somewhere else,
-pass a path or set `LAMP_DB_PATH`.
+`init_db.py` creates `data/lamp.sqlite` from the template. To keep the
+database somewhere else, set `LAMP_DB_PATH` (absolute, or relative to the repo
+root). The script, the backend, and the deploy script all read it.
 
-Instructions for running the API and UI will land here with Phase 1. The plan:
-FastAPI on `127.0.0.1:8000` and the Vite dev server on `localhost:5173`, with
-Vite proxying `/api` to FastAPI so there's no CORS to configure.
+## Development
+
+Run the API and the UI in two terminals:
+
+```bash
+cd backend && uv run uvicorn app.main:app --reload
+```
+
+```bash
+cd frontend && npm run dev
+```
+
+Open http://localhost:5173. Vite forwards `/api` requests to FastAPI on
+`127.0.0.1:8000`, so there's no CORS to configure. FastAPI's interactive API
+docs are at http://127.0.0.1:8000/docs.
+
+The backend refuses to start if the database is missing or was built from a
+different schema version, and the error says how to fix it. It never creates a
+database on its own, because an empty database appearing where yours should
+be would look exactly like data loss.
+
+### Checks
+
+These are the same commands CI runs:
+
+```bash
+cd backend && uv run ruff check . ../scripts && uv run ruff format --check . ../scripts && uv run mypy . ../scripts && uv run pytest
+```
+
+```bash
+cd frontend && npm run lint && npm test && npm run build
+```
+
+The backend suite includes `tests/test_schema.py`, which exercises every rule
+the database enforces on its own: constraints, triggers, delete behavior, and
+the derived-status view.
+
+## CI/CD
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request and every push to
+`main`, as two parallel jobs:
+
+| Job | Steps |
+|---|---|
+| Backend | `uv sync --locked`, Ruff lint and format check, mypy (strict), pytest, ShellCheck on `scripts/*.sh` |
+| Frontend | `npm ci`, Oxlint (warnings fail), Vitest, `tsc` type-check and production build |
+
+The workflow's token is read-only, every action is pinned to a full commit
+SHA, and a newer push to a pull request cancels its older run. Dependabot
+(`.github/dependabot.yml`) opens one grouped update PR a month for each
+ecosystem (actions, uv, npm), and CI vets each one like any other change.
+
+### Deployment
+
+This app's production environment is your own machine, so deploying is a
+local step rather than a pipeline stage:
+
+```bash
+scripts/deploy.sh
+```
+
+It refuses to run unless you're on a clean `main`. It then pulls, checks that
+CI passed for that exact commit, backs up the database to `data/backups/`,
+syncs backend dependencies, and builds the UI. Then start the app:
+
+```bash
+cd backend && uv run uvicorn app.main:app
+```
+
+and open http://127.0.0.1:8000. In this mode FastAPI serves the built UI and
+the API from one process on one port.
+
+Nothing deploys automatically, on purpose. There's no server to push to. A
+self-hosted runner on this machine would let workflows from a public repo run
+code on it. And a deploy that touches the only copy of your data should be a
+step you choose to take. If the app moves to the homelab, CD becomes: build
+an image, push it, roll it out.
 
 ## Repository layout
 
 ```
-db/schema.sql        SQLite template: tables, constraints, triggers, view (committed)
-scripts/init_db.py   builds data/lamp.sqlite from the template; stdlib only
-data/                gitignored: live database, resume files, backups, sheet exports
-backend/             FastAPI app (Phase 1, not created yet)
-frontend/            React app (Phase 1, not created yet)
-PROJECT_BRIEF.md     design brief
+backend/              FastAPI app (app/) and its tests (tests/); a uv project
+frontend/             React + TypeScript app; Vite, Vitest, Oxlint
+db/schema.sql         SQLite template: tables, constraints, triggers, view
+scripts/init_db.py    builds data/lamp.sqlite from the template; stdlib only
+scripts/deploy.sh     deploys the latest green commit of main to this machine
+.github/              CI workflow and Dependabot config
+ruff.toml             Ruff settings for all Python in the repo
+data/                 gitignored: live database, backups, resume files
+PROJECT_BRIEF.md      design brief
 ```
 
 ## The database
@@ -104,7 +193,7 @@ can't read `STRICT` tables. Keep these in mind:
 
 - **Foreign keys are off unless you turn them on**, per connection:
   `PRAGMA foreign_keys = ON;`. With them off, deletes don't cascade and bad
-  references go unchecked. The backend will turn them on for every connection.
+  references go unchecked. The backend turns them on for every connection.
 - **You can't update `stage_event` rows.** To fix a mis-keyed event, delete it
   and insert the correct one.
 - **Status isn't stored anywhere.** Read it from the view:
@@ -113,7 +202,8 @@ can't read `STRICT` tables. Keep these in mind:
 ### Backups
 
 A plain `cp` while the app is running can copy the file in the middle of a
-write. Use SQLite's online backup instead:
+write. Use SQLite's online backup instead (`scripts/deploy.sh` does this
+before every deploy):
 
 ```bash
 mkdir -p data/backups
@@ -122,10 +212,12 @@ sqlite3 data/lamp.sqlite ".backup data/backups/lamp-$(date +%F).sqlite"
 
 ### Changing the schema
 
-Edit `db/schema.sql` and bump `PRAGMA user_version`. While the database holds
-no real data, delete it and recreate it. Once it does, changes ship as
-numbered migration scripts applied in order against `user_version`. That
-runner gets built along with the first change that needs it.
+Edit `db/schema.sql`, bump `PRAGMA user_version`, and bump `SCHEMA_VERSION` in
+`backend/app/db.py` to match. The backend refuses to start when the two
+disagree. While the database holds no real data, delete it and recreate it.
+Once it does, changes ship as numbered migration scripts applied in order
+against `user_version`. That runner gets built along with the first change
+that needs it.
 
 ## Domain model
 
@@ -174,9 +266,9 @@ reason to leave the spreadsheet.
 
 ## Roadmap
 
-- **Phase 0, Foundation:** schema template and bootstrap script (done). Still
-  to come: a CSV importer that turns the sheet's milestone date columns into
-  `stage_event` rows.
+- **Phase 0, Foundation:** schema template, bootstrap script, app skeleton,
+  and CI/CD (done). The CSV importer for the existing sheet is deferred until
+  later.
 - **Phase 1, Replace the spreadsheet:** CRUD for companies, applications, and
   contacts. The board view, application detail with a stage timeline, and
   keyboard quick-add.
