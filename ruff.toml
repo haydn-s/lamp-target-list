@@ -1,0 +1,12 @@
+# Ruff settings for all Python in the repo (backend/ and scripts/).
+target-version = "py312"
+line-length = 100
+src = ["backend"]  # so `app` sorts as a first-party import
+
+[lint]
+extend-select = [
+    "B",   # bugbear: likely bugs
+    "I",   # import sorting
+    "SIM", # simplifications
+    "UP",  # modern syntax for the target version
+]

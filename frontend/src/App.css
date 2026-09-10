@@ -1,0 +1,40 @@
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.api-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.api-status.ok {
+  color: var(--ok);
+}
+
+.api-status.error {
+  color: var(--error);
+}
+
+.app-main {
+  flex: 1;
+  padding: 24px;
+  color: var(--muted);
+}

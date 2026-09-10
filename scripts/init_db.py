@@ -3,8 +3,9 @@
 
     python3 scripts/init_db.py [PATH]
 
-PATH defaults to $LAMP_DB_PATH, then data/lamp.sqlite. Uses only the standard
-library, so it works before any backend dependencies are installed.
+PATH defaults to $LAMP_DB_PATH (taken relative to the repo root, as the backend
+does), then data/lamp.sqlite. Uses only the standard library, so it works
+before any backend dependencies are installed.
 
 It never overwrites an existing file, because the live database holds data
 that exists nowhere else. Delete the file yourself to start over.
@@ -26,6 +27,8 @@ def main() -> int:
         target = Path(sys.argv[1])
     else:
         target = Path(os.environ.get("LAMP_DB_PATH", DEFAULT_DB))
+        if not target.is_absolute():
+            target = ROOT / target
 
     if sqlite3.sqlite_version_info < MIN_SQLITE:
         sys.exit(f"SQLite {sqlite3.sqlite_version} is too old; the template needs 3.37 or newer.")
